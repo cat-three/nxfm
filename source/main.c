@@ -19,17 +19,6 @@ int mainLoop();
 // Exit filesystem browser application
 int appExit();
 
-// Current directory to be displayed, needs better name
-char* curDir = NULL;
-// Number of files in current directory
-uint64_t numFilesInDir = 0;
-// Number of lines in directory to be displayed
-const uint8_t lineLimit = 5;
-// Current index selected, out of the displayed lines
-uint8_t selLine = 0;
-// Current index that top of the list is at, for scrolling
-uint8_t scrollLine = 0;
-
 // Data of files of current directory,
 // including struct information, somewhat hacky
 struct appDirEnt {
@@ -43,6 +32,23 @@ void allocCurDirFiles(uint64_t numFiles);
 int addCurDirFile(struct dirent* dp);
 void freeCurDirFiles();
 
+// Topmost/leftmost console indices to render at
+unsigned int x_top = 8;
+unsigned int y_top = 5;
+// Column/View 2 view, topmost/leftmost indices for console
+unsigned int x2_top = 86;
+unsigned int y2_top = 5;
+
+// Current directory to be displayed, needs better name
+char* curDir = NULL;
+// Number of files in current directory
+uint64_t numFilesInDir = 0;
+// Number of lines in directory to be displayed
+const uint8_t lineLimit = 5;
+// Current index selected, out of the displayed lines
+uint8_t selLine = 0;
+// Current index that top of the list is at, for scrolling
+uint8_t scrollLine = 0;
 
 int main(int argc, char **argv)
 {
@@ -64,9 +70,9 @@ void appInit()
     consoleInit(NULL);
 
     // Initialization messages, not too important
-    printf("\x1b[2;2HLow-energy File-system xd");
-    printf("\x1b[3;2H_catcatcat /)w(\\");
-    printf("\x1b[20;2HPress + to exit.");
+    printf("\x1b[%i;%iHLow-energy File-system xd", y_top, x_top);
+    printf("\x1b[%i;%iH_catcatcat /)w(\\", y_top + 1, x_top);
+    printf("\x1b[%i;%iHPress + to exit.", y_top + 18, x_top);
 
     // Set default directory at startup to SDCard root and display
     updateDir("sdmc:/");
@@ -113,7 +119,8 @@ void updateDir(char* newDir)
 
     DIR* dir = opendir(curDir);
     if (!dir) {
-        printf("\x1b[5;2HFailed opendir() call; curDir=%s", curDir);
+        printf("\x1b[%i;%iHFailed opendir() call; curDir=%s",
+            y_top + 3, x_top, curDir);
         // TODO: Add error handling
         // Or other handling, maybe directory doesn't exist
         return;
@@ -168,13 +175,19 @@ void updateCur(uint8_t input)
     }
 }
 
+// TODO: Update to say "updateViews()"?
 void updateView()
 {
-    printf("\x1b[37m\x1b[5;2HContents of %-40s", curDir);
-    printf("\x1b[37m\x1b[6;2HTotal Files: %-4li", numFilesInDir);
+    printf("\x1b[37m\x1b[%i;%iHContents of %-40s",
+        y_top + 3, x_top, curDir);
+    printf("\x1b[37m\x1b[%i;%iHTotal Files: %-4li",
+        y_top + 4, x_top, numFilesInDir);
 
-    // Specific row to start printf()'ing at, lazy practice, TODO remove later
-    const uint8_t dirlist_base = 8;
+    // Specific row to start printf()'ing at, still lazy practice
+    const uint8_t dirlist_base = y_top + 6;
+
+    // For reference, the actually selected file
+    struct appDirEnt* realCurFile = malloc(sizeof(struct appDirEnt));
 
     unsigned long render_index = 0;
     unsigned long file_index = 0;
@@ -182,27 +195,37 @@ void updateView()
         if (file_index >= scrollLine && 
             file_index <= (scrollLine + lineLimit - 1)) {
             struct appDirEnt* curFile = curDirFiles[file_index];
+            char selector = ' ';
+            if (selLine == file_index) {
+                selector = '>';
+                memcpy(realCurFile, curFile, sizeof(struct appDirEnt));
+            }
             switch (curFile->d_type) {
                 case DT_DIR:
-                    printf("\x1b[%li;2H\x1b[37m%c \x1b[36m%-50s", 
-                        (dirlist_base + render_index), 
-                        selLine == file_index ? '>' : ' ', curFile->d_name);
+                    printf("\x1b[%li;%iH\x1b[37m%c \x1b[36m%-50s", 
+                        (dirlist_base + render_index), x_top,
+                        selector, curFile->d_name);
                     break;
                 default:
-                    printf("\x1b[%li;2H\x1b[37m%c \x1b[37m%-50s", 
-                        (dirlist_base + render_index), 
-                        selLine == file_index ? '>' : ' ', curFile->d_name);
+                    printf("\x1b[%li;%iH\x1b[37m%c \x1b[37m%-50s", 
+                        (dirlist_base + render_index), x_top,
+                        selector, curFile->d_name);
                     break;
             }
             render_index++;
         }
     }
-    
     while (render_index < lineLimit) {
-        printf("\x1b[%li;2H%-25s",
-            (dirlist_base + render_index), "");
+        printf("\x1b[%li;%iH%-25s",
+            (dirlist_base + render_index), x_top, "");
         render_index++;
     }
+
+    // Now, draw column/view #2
+    printf("\x1b[%i;%iH\x1b[37m%-50s", y2_top, x2_top,
+        realCurFile->d_name);
+
+    free(realCurFile);
 }
 
 // TODO: Better return value convention
