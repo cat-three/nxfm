@@ -3,6 +3,10 @@
 #include <dirent.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <errno.h>
 
 #include <switch.h>
 
@@ -49,6 +53,8 @@ const uint8_t lineLimit = 5;
 uint8_t selLine = 0;
 // Current index that top of the list is at, for scrolling
 uint8_t scrollLine = 0;
+// Current index for file actions, -1 for inactive
+int selFileAction = -1;
 
 int main(int argc, char **argv)
 {
@@ -70,8 +76,8 @@ void appInit()
     consoleInit(NULL);
 
     // Initialization messages, not too important
-    printf("\x1b[%i;%iHLow-energy File-system xd", y_top, x_top);
-    printf("\x1b[%i;%iH_catcatcat /)w(\\", y_top + 1, x_top);
+    printf("\x1b[%i;%iHLow-energy File-system xd | Ver. 0.0.1", y_top, x_top);
+    printf("\x1b[%i;%iHa-catcatcat~ /)w(\\", y_top + 1, x_top);
     printf("\x1b[%i;%iHPress + to exit.", y_top + 18, x_top);
 
     // Set default directory at startup to SDCard root and display
@@ -158,18 +164,32 @@ void updateCur(uint8_t input)
 {
     // Update appropriate globals
     if (input == 0) {
-        if (selLine != 0) {
-            if (scrollLine != 0 && selLine == scrollLine)
-                scrollLine--;
-            selLine--;
+        if (selFileAction == -1) {
+            if (selLine != 0) {
+                if (scrollLine != 0 && selLine == scrollLine)
+                    scrollLine--;
+                selLine--;
+                updateView();
+            }
+        } else {
+            // TODO: Remove hardcoded constants
+            if (selFileAction > 0)
+                selFileAction--;
             updateView();
         }
     } else { // input == 1
-        if (selLine < (numFilesInDir - 1)) {
-            selLine++;
-            if (scrollLine < (numFilesInDir - lineLimit) &&
-               selLine == (scrollLine + lineLimit))
-                scrollLine++;
+        if (selFileAction == -1) {
+            if (selLine < (numFilesInDir - 1)) {
+                selLine++;
+                if (scrollLine < (numFilesInDir - lineLimit) &&
+                   selLine == (scrollLine + lineLimit))
+                    scrollLine++;
+                updateView();
+            }
+        } else {
+            // TODO: Remove hardcoded constants
+            if (selFileAction < 2)
+                selFileAction++;
             updateView();
         }
     }
@@ -194,6 +214,7 @@ void updateView()
     for (file_index = 0; file_index < numFilesInDir; file_index++) {
         if (file_index >= scrollLine && 
             file_index <= (scrollLine + lineLimit - 1)) {
+            // TODO: Re-evaluate this drunk coding decision...
             struct appDirEnt* curFile = curDirFiles[file_index];
             char selector = ' ';
             if (selLine == file_index) {
@@ -202,12 +223,12 @@ void updateView()
             }
             switch (curFile->d_type) {
                 case DT_DIR:
-                    printf("\x1b[%li;%iH\x1b[37m%c \x1b[36m%-50s", 
+                    printf("\x1b[%li;%iH\x1b[37m%c \x1b[36m%-60s", 
                         (dirlist_base + render_index), x_top,
                         selector, curFile->d_name);
                     break;
                 default:
-                    printf("\x1b[%li;%iH\x1b[37m%c \x1b[37m%-50s", 
+                    printf("\x1b[%li;%iH\x1b[37m%c \x1b[37m%-60s", 
                         (dirlist_base + render_index), x_top,
                         selector, curFile->d_name);
                     break;
@@ -222,8 +243,63 @@ void updateView()
     }
 
     // Now, draw column/view #2
-    printf("\x1b[%i;%iH\x1b[37m%-50s", y2_top, x2_top,
-        realCurFile->d_name);
+    if (numFilesInDir > 0) {
+        if (realCurFile->d_type == DT_DIR) {
+            printf("\x1b[%i;%iH\x1b[37mName: %-54s", y2_top, x2_top,
+                realCurFile->d_name);
+            printf("\x1b[%i;%iH\x1b[37m%-60s", y2_top + 1, x2_top,
+                "Directory");
+        } else {
+            printf("\x1b[%i;%iH\x1b[37mName: %-54s", y2_top, x2_top,
+                realCurFile->d_name);
+            struct stat statbuf = { 0 };
+            // TODO: error-handle the malloc
+            char* filename_with_path = 
+                malloc(strlen(curDir) + strlen(realCurFile->d_name) + 1);
+            sprintf(filename_with_path, "%s%s", curDir, realCurFile->d_name);
+            if (!stat(filename_with_path, &statbuf)) {
+                // TODO: String formatting
+                printf("\x1b[%i;%iH\x1b[37mSize: %-54i", y2_top + 1, x2_top,
+                    (int)(statbuf.st_size));
+                printf("\x1b[%i;%iH\x1b[37m%-30s", y2_top + 2, x2_top,
+                    "");
+            } else {
+                printf("\x1b[%i;%iH\x1b[37mSize: %-54s", y2_top + 1, x2_top,
+                    "Unable to obtain file size");
+                printf("\x1b[%i;%iH\x1b[37mReason: %-22i", y2_top + 2, x2_top,
+                    errno);
+            }
+            free(filename_with_path);
+        }
+    } else {
+        printf("\x1b[%i;%iH\x1b[37m%-60s", y2_top, x2_top,
+            "Folder is empty.");
+        printf("\x1b[%i;%iH\x1b[37m%-60s", y2_top + 1, x2_top,
+            "");
+    }
+
+    // Then, draw sub-field in column/view #2
+    // TODO: create variable "y2_top_2" for this?
+    if (selFileAction == -1) {
+        printf("\x1b[%i;%iH\x1b[37m%-10s", y2_top + 8, x2_top,
+            "");
+        printf("\x1b[%i;%iH\x1b[37m%-10s", y2_top + 9, x2_top,
+            "");
+        printf("\x1b[%i;%iH\x1b[37m%-10s", y2_top + 10, x2_top,
+            "");
+        printf("\x1b[%i;%iH\x1b[37m%-10s", y2_top + 11, x2_top,
+            "");
+    } else {
+        // TODO: Filetype-specific options, also actual optimization
+        printf("\x1b[%i;%iH\x1b[%s%-10s", y2_top + 8, x2_top,
+            selFileAction == 0 ? "47;1m" : "37;0m", "Delete");
+        printf("\x1b[%i;%iH\x1b[%s%-10s", y2_top + 9, x2_top,
+            selFileAction == 1 ? "47;1m" : "37;0m", "Rename");
+        printf("\x1b[%i;%iH\x1b[%s%-10s", y2_top + 10, x2_top,
+            selFileAction == 2 ? "47;1m" : "37;0m", "Copy");
+        printf("\x1b[%i;%iH\x1b[37;0m%-10s", y2_top + 11, x2_top,
+            "");
+    }
 
     free(realCurFile);
 }
@@ -252,14 +328,19 @@ int mainLoop()
                 // A directory; move into said directory
                 updateDir(curFile->d_name);
             } else {
-                // Type other than a directory, but likely a regular file
-                // Maybe open up a menu?
-                // Probably also highlight the area using escape codes
+                // Set file index from no index to top index
+                selFileAction = 0;
+                updateView();
             }
         }
     } else if (kDown & KEY_B) {
-        // Go (B)ack, however that means
-        updateDir("..");
+        if (selFileAction == -1) {
+            updateDir("..");
+        } else {
+            //struct appDirEnt* curFile = curDirFiles[selLine];
+            selFileAction = -1;
+            updateView();
+        }
     }
 
     gfxFlushBuffers();
